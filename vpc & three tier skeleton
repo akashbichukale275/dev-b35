@@ -1,0 +1,212 @@
+provider "aws" {
+  region  = "us-east-1"
+  profile = "tf-user"
+
+}
+
+resource "aws_vpc" "custom" {
+  cidr_block = "10.0.0.0/16"
+
+  tags = {
+    Name = "custom-vpc"
+  }
+
+}
+
+resource "aws_subnet" "public-sub" {
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "us-east-1a"
+  vpc_id                  = aws_vpc.custom.id
+  map_public_ip_on_launch = "true"
+
+  tags = {
+    Name = "pub-subnet"
+  }
+}
+
+resource "aws_subnet" "private-sub" {
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "us-east-1b"
+  vpc_id                  = aws_vpc.custom.id
+  map_public_ip_on_launch = "false"
+
+  tags = {
+    Name = "priv-subnet"
+  }
+}
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.custom.id
+
+  tags = {
+    Name = "internet"
+  }
+}
+
+resource "aws_route_table" "public-rt" {
+  vpc_id = aws_vpc.custom.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+  tags = {
+    Name = "pub-route"
+  }
+
+}
+
+resource "aws_route_table" "private-rt" {
+  vpc_id = aws_vpc.custom.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
+  }
+
+  tags = {
+    Name = "priv-route"
+  }
+}
+
+resource "aws_route_table_association" "attach" {
+  subnet_id      = aws_subnet.public-sub.id
+  route_table_id = aws_route_table.public-rt.id
+
+}
+
+resource "aws_route_table_association" "attach2" {
+  subnet_id      = aws_subnet.private-sub.id
+  route_table_id = aws_route_table.private-rt.id
+
+}
+
+resource "aws_eip" "elastic" {
+  domain = "vpc"
+
+}
+
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.elastic.id
+  subnet_id     = aws_subnet.public-sub.id
+
+  tags = {
+    Name = "nat-gateway"
+  }
+}
+
+output "vpc_id" {
+  value = aws_vpc.custom.owner_id
+
+}
+
+resource "aws_instance" "demo" {
+  ami                    = "ami-06c68f701d8090592"
+  instance_type          = "t3.medium"
+  key_name               = "akash"
+  subnet_id              = aws_subnet.public-sub.id
+  vpc_security_group_ids = [aws_security_group.sg-nginx.id]
+
+  tags = {
+    Name = "nginx-instance"
+  }
+}
+
+resource "aws_instance" "demo1" {
+  ami                    = "ami-06c68f701d8090592"
+  instance_type          = "t3.medium"
+  key_name               = "akash"
+  subnet_id              = aws_subnet.private-sub.id
+  vpc_security_group_ids = [aws_security_group.sg-tomcat.id]
+
+  tags = {
+    Name = "tomcat-instance"
+
+  }
+}
+
+resource "aws_instance" "demo2" {
+  ami                    = "ami-06c68f701d8090592"
+  instance_type          = "t3.medium"
+  key_name               = "akash"
+  subnet_id              = aws_subnet.private-sub.id
+  vpc_security_group_ids = [aws_security_group.sg-rds.id]
+
+  tags = {
+    Name = "rds-instance"
+  }
+}
+
+resource "aws_security_group" "sg-tomcat" {
+  vpc_id = aws_vpc.custom.id
+  name   = "tomcat-sg"
+
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "sg-nginx" {
+  name   = "nginx-sg"
+  vpc_id = aws_vpc.custom.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "sg-rds" {
+  name   = "rds-sg"
+  vpc_id = aws_vpc.custom.id
+
+  ingress {
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_db_instance" "database" {
+  identifier           = "my-database"
+  allocated_storage    = 20
+  storage_type         = "gp2"
+  engine               = "mysql"
+  engine_version       = "5.7"
+  instance_class       = "db.t3.medium"
+  username             = "admin"
+  password             = "akash12345"
+  parameter_group_name = "default.mysql5.7"
+}
+
+output "endpoint" {
+  value = aws_db_instance.database.listener_endpoint
+
+}
